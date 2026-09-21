@@ -58,9 +58,13 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"Local   : {result.get('installed_version')} ({result.get('install_source')})")
         print(f"Update  : {result.get('has_update')} ({result.get('reason')})")
 
-    should_notify = bool(result.get("ok") and result.get("has_update")) or bool(
-        result.get("ok") and cfg.get("notify_on_up_to_date") and not args.quiet and not args.json
-    )
+    should_notify = False
+    if result.get("ok") and result.get("should_notify"):
+        should_notify = True
+    elif args.notify and result.get("ok"):
+        should_notify = True
+    elif result.get("ok") and cfg.get("notify_on_up_to_date") and not args.quiet and not args.json:
+        should_notify = True
     if should_notify and not args.json:
         notify(result)
 
@@ -75,11 +79,10 @@ def cmd_download(args: argparse.Namespace) -> int:
         return 3
     dest = download_asset(result, args.out or cfg.get("download_dir"))
     print(f"Saved: {dest}")
-    if args.download_only:
-        print(
-            "Download-only: extract into "
-            f"{cfg.get('wsa_install_dir')} and re-register Appx as admin."
-        )
+    print(
+        "Install is always manual: extract into "
+        f"{cfg.get('wsa_install_dir')} and re-register Appx as admin."
+    )
     return 0
 
 
@@ -145,7 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("download", help="Download matched asset (no auto-install)")
     d.add_argument("--config", help="Path to config.json")
     d.add_argument("--out", help="Download directory override")
-    d.add_argument("--download-only", action="store_true", default=True)
+    d.add_argument(
+        "--download-only",
+        action="store_true",
+        default=False,
+        help="Print install reminder (default behavior never auto-installs)",
+    )
     d.set_defaults(func=cmd_download)
 
     i = sub.add_parser("init-config", help="Write default config.json")

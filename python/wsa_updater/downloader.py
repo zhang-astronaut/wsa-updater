@@ -37,13 +37,30 @@ def download_asset(result: Dict[str, Any], download_dir: Optional[str] = None) -
         token = os.environ.get("GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        req = Request(str(url), headers=headers, method="GET")
-        with urlopen(req, timeout=120) as resp, open(partial, "wb") as fh:
-            while True:
-                chunk = resp.read(1024 * 256)
-                if not chunk:
-                    break
-                fh.write(chunk)
+        resume_from = partial.stat().st_size if partial.exists() else 0
+        if resume_from > 0:
+            headers["Range"] = f"bytes={resume_from}-"
+        try:
+            req = Request(str(url), headers=headers, method="GET")
+            with urlopen(req, timeout=120) as resp, open(partial, "ab" if resume_from else "wb") as fh:
+                while True:
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+        except Exception:
+            # Range may be unsupported; restart full download
+            if resume_from > 0:
+                headers.pop("Range", None)
+                req = Request(str(url), headers=headers, method="GET")
+                with urlopen(req, timeout=120) as resp, open(partial, "wb") as fh:
+                    while True:
+                        chunk = resp.read(1024 * 256)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+            else:
+                raise
 
     partial.replace(dest)
     return dest

@@ -13,23 +13,27 @@ def notify(result: Dict[str, Any]) -> bool:
     """Show toast via PowerShell helper; fall back to console."""
     if not result.get("ok"):
         return False
-    title = "WSA 有可用更新" if result.get("has_update") else "WSA 更新检查"
-    lines = []
-    inst = result.get("installed_version") or "未检测到已安装 WSA"
-    lines.append(f"当前: {inst}")
-    lines.append(f"新版本: {result.get('release_tag')}")
+    title = "WSA update available" if result.get("has_update") else "WSA update check"
+    inst = result.get("installed_version") or "No local WSA detected"
+    lines: list[str] = []
+    lines.append(f"Current: {inst}")
+    lines.append(f"New: {result.get('release_tag')}")
     if result.get("asset_version"):
-        lines.append(f"包版本: {result.get('asset_version')}")
-    lines.append(f"资源: {result.get('asset_name')}")
-    body = "\\n".join(lines)
+        lines.append(f"Asset ver: {result.get('asset_version')}")
+    lines.append(f"Asset: {result.get('asset_name')}")
+    body = "\n".join(lines)
+
+    body_ps = body.replace("`", "``").replace("'", "''")
+    title_ps = title.replace("'", "''")
+    body_oneline = body.replace("\n", " | ").replace("'", "''")
 
     ps = f"""
-$title = {_ps_quote(title)}
-$body = {_ps_quote(body)}
+$title = '{title_ps}'
+$body = '{body_oneline}'
 try {{
   $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
   $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-  $xml = "<toast><visual><binding template='ToastGeneric'><text>$title</text><text>$($body -replace "`n", ' | ')</text></binding></visual></toast>"
+  $xml = "<toast><visual><binding template='ToastGeneric'><text>$title</text><text>$body</text></binding></visual></toast>"
   $doc = New-Object Windows.Data.Xml.Dom.XmlDocument
   $doc.LoadXml($xml)
   $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Windows PowerShell')
@@ -41,7 +45,7 @@ try {{
 """
     if sys.platform != "win32":
         print(title)
-        print(body.replace("\\n", "\n"))
+        print(body)
         return False
     proc = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],

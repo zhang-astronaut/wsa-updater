@@ -87,13 +87,15 @@ Python 3.9+，**仅标准库**。可选 `GITHUB_TOKEN` 环境变量避免 API �
 ```powershell
 cd wsa-updater
 # PowerShell 语法
-powershell -NoProfile -Command "Get-ChildItem powershell\*.ps1,powershell\*.psm1 | ForEach-Object { $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs); if ($errs) { $errs; exit 1 } }; 'PS_PARSE_OK'"
+powershell -NoProfile -Command "Get-ChildItem powershell\*.ps1,powershell\*.psm1 | ForEach-Object { $errs=$null; $null=[System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$null,[ref]$errs); if($errs){$errs; exit 1} }; 'PS_PARSE_OK'"
 
-# Python 单测（需 pytest）
-cd python
-$env:PYTHONPATH = "$PWD"
-# 或：pip install pytest && pytest ..\tests -q
+# Python 单测（无需 pytest）
+$py = $env:MIMO_PYTHON; if (-not $py) { $py = 'python' }
+$env:PYTHONPATH = "$PWD\python"
+& $py tests\run_tests.py
 ```
+
+可选：`pip install pytest` 后也可用 `pytest tests -q`。
 
 ## 换机使用
 

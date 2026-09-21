@@ -1,4 +1,4 @@
-﻿# WsaUpdater PowerShell helpers for WSABuilds update checks.
+# WsaUpdater PowerShell helpers for WSABuilds update checks.
 # Compatible with Windows PowerShell 5.1+ and PowerShell 7+.
 
 Set-StrictMode -Version Latest
@@ -227,29 +227,31 @@ function Invoke-WsaUpdateCheck {
     $tag = [string]$release.tag_name
 
     $hasUpdate = $false
-    $reason = ''
+    $reason = 'up_to_date'
+    $notify = $false
+
     if (-not $installed.Version) {
         $hasUpdate = $true
         $reason = 'no_local_wsa'
-    } elseif ($assetVer -and ($assetVer -ne $installed.Version)) {
-        $hasUpdate = $true
-        $reason = 'version_mismatch'
-    } elseif (-not $assetVer -and $Config.last_release_tag -and ($tag -ne [string]$Config.last_release_tag)) {
-        $hasUpdate = $true
-        $reason = 'new_release_tag'
-    } elseif (-not $Config.last_release_tag) {
-        $hasUpdate = $true
-        $reason = 'first_seen_release'
-    } else {
+        $notify = -not ($Config.last_release_tag -eq $tag -and $Config.last_asset_name -eq $asset.name)
+    } elseif ($assetVer -and ($installed.Version -eq $assetVer)) {
+        # Already on this WSA build — never a false-positive "first seen" update.
         $hasUpdate = $false
         $reason = 'up_to_date'
-    }
-
-    # Dedup: if same tag+asset already notified and still same installed version, mark up_to_date
-    if ($hasUpdate -and $Config.last_release_tag -eq $tag -and $Config.last_asset_name -eq $asset.name) {
-        if ($installed.Version -and $assetVer -and ($installed.Version -eq $assetVer)) {
-            $hasUpdate = $false
-            $reason = 'up_to_date'
+        $notify = $false
+    } elseif ($assetVer -and ($installed.Version -ne $assetVer)) {
+        $hasUpdate = $true
+        $reason = 'version_mismatch'
+        # Notify once per release+asset until user installs that build.
+        $notify = -not ($Config.last_release_tag -eq $tag -and $Config.last_asset_name -eq $asset.name)
+    } elseif (-not $assetVer) {
+        $hasUpdate = $true
+        if ($Config.last_release_tag -eq $tag -and $Config.last_asset_name -eq $asset.name) {
+            $reason = 'already_notified'
+            $notify = $false
+        } else {
+            $reason = 'first_seen_release'
+            $notify = $true
         }
     }
 
@@ -258,6 +260,7 @@ function Invoke-WsaUpdateCheck {
         error             = $null
         exit_code         = 0
         has_update        = $hasUpdate
+        should_notify     = $notify
         reason            = $reason
         release_tag       = $tag
         release_name      = [string]$release.name
@@ -289,7 +292,10 @@ function Show-WsaUpdateToast {
     $lines += "New: $($Result.release_tag)"
     if ($Result.asset_version) { $lines += "Asset ver: $($Result.asset_version)" }
     $lines += "Asset: $($Result.asset_name)"
-    $body = ($lines -join "`n")
+    $body = ($lines -join [Environment]::NewLine)
+    $titleXml = [System.Security.SecurityElement]::Escape($title)
+    $bodyXml = [System.Security.SecurityElement]::Escape($body)
+    $urlXml = [System.Security.SecurityElement]::Escape([string]$Result.release_url)
 
     $shown = $false
     try {
@@ -299,15 +305,12 @@ function Show-WsaUpdateToast {
 <toast>
   <visual>
     <binding template="ToastGeneric">
-      <text>$([System.Security.SecurityElement]::Escape($title))</text>
-      <text>$([System.Security.SecurityElement]::Escape($body))</text>
+      <text>$titleXml</text>
+      <text>$bodyXml</text>
     </binding>
   </visual>
   <actions>
-    <input id="snooze" type="selection" defaultInput="15">
-      <selection id="15" content="15 min"/>
-    </input>
-    <action content="查看 Releases" activationType="protocol" arguments="$($Result.release_url)"/>
+    <action content="Open Releases" activationType="protocol" arguments="$urlXml"/>
   </actions>
 </toast>
 "@
@@ -357,7 +360,24 @@ function Start-WsaAssetDownload {
         }
     } else {
         $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $url -OutFile $partial -UseBasicParsing
+        $resumeFrom = 0
+        if (Test-Path -LiteralPath $partial) {
+            $resumeFrom = (Get-Item -LiteralPath $partial).Length
+        }
+        $headers = @{ 'User-Agent' = 'wsa-updater' }
+        if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $($env:GITHUB_TOKEN)" }
+        if ($resumeFrom -gt 0) {
+            $headers['Range'] = "bytes=$resumeFrom-"
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $partial -Headers $headers -UseBasicParsing -MaximumRedirection 10
+            } catch {
+                # Server may not honor Range; restart full download.
+                Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+                Invoke-WebRequest -Uri $url -OutFile $partial -Headers @{ 'User-Agent' = 'wsa-updater' } -UseBasicParsing
+            }
+        } else {
+            Invoke-WebRequest -Uri $url -OutFile $partial -Headers $headers -UseBasicParsing
+        }
     }
     Move-Item -LiteralPath $partial -Destination $dest -Force
     $hash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLower()

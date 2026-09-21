@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import winreg
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -153,25 +152,26 @@ def _read_manifest_version(install_dir: str) -> Optional[str]:
 
 
 def get_installed_wsa_version(install_dir: str) -> Dict[str, Any]:
-    # Best-effort Appx probe via PowerShell is heavier; use manifest + registry Appx packages when possible.
     pkg_name = "MicrosoftCorporationII.WindowsSubsystemForAndroid"
-    try:
-        key_path = r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
-            i = 0
-            while True:
-                try:
-                    name = winreg.EnumKey(key, i)
-                except OSError:
-                    break
-                i += 1
-                if name.startswith(pkg_name + "_"):
-                    # PackageFullName like Name_Version_arch__pubid
-                    parts = name.split("_")
-                    if len(parts) >= 2:
-                        return {"version": parts[1], "package_full_name": name, "source": "appx"}
-    except OSError:
-        pass
+    if os.name == "nt":
+        try:
+            import winreg
+
+            key_path = r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+                i = 0
+                while True:
+                    try:
+                        name = winreg.EnumKey(key, i)
+                    except OSError:
+                        break
+                    i += 1
+                    if name.startswith(pkg_name + "_"):
+                        parts = name.split("_")
+                        if len(parts) >= 2:
+                            return {"version": parts[1], "package_full_name": name, "source": "appx"}
+        except Exception:
+            pass
 
     ver = _read_manifest_version(install_dir)
     if ver:
@@ -209,31 +209,44 @@ def check_updates(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     tag = str(release.get("tag_name") or "")
 
     has_update = False
+    should_notify = False
     reason = "up_to_date"
     if not installed.get("version"):
-        has_update, reason = True, "no_local_wsa"
-    elif asset_ver and asset_ver != installed.get("version"):
-        has_update, reason = True, "version_mismatch"
-    elif not asset_ver and cfg.get("last_release_tag") and tag != str(cfg.get("last_release_tag")):
-        has_update, reason = True, "new_release_tag"
-    elif not cfg.get("last_release_tag"):
-        has_update, reason = True, "first_seen_release"
-
-    if (
-        has_update
-        and str(cfg.get("last_release_tag") or "") == tag
-        and str(cfg.get("last_asset_name") or "") == str(asset.get("name") or "")
-        and installed.get("version")
-        and asset_ver
-        and installed.get("version") == asset_ver
-    ):
-        has_update, reason = False, "up_to_date"
+        has_update = True
+        reason = "no_local_wsa"
+        should_notify = not (
+            str(cfg.get("last_release_tag") or "") == tag
+            and str(cfg.get("last_asset_name") or "") == str(asset.get("name") or "")
+        )
+    elif asset_ver and installed.get("version") == asset_ver:
+        has_update = False
+        reason = "up_to_date"
+        should_notify = False
+    elif asset_ver and installed.get("version") != asset_ver:
+        has_update = True
+        reason = "version_mismatch"
+        should_notify = not (
+            str(cfg.get("last_release_tag") or "") == tag
+            and str(cfg.get("last_asset_name") or "") == str(asset.get("name") or "")
+        )
+    else:
+        has_update = True
+        if (
+            str(cfg.get("last_release_tag") or "") == tag
+            and str(cfg.get("last_asset_name") or "") == str(asset.get("name") or "")
+        ):
+            reason = "already_notified"
+            should_notify = False
+        else:
+            reason = "first_seen_release"
+            should_notify = True
 
     return {
         "ok": True,
         "error": None,
         "exit_code": 0,
         "has_update": has_update,
+        "should_notify": should_notify,
         "reason": reason,
         "release_tag": tag,
         "release_name": release.get("name"),

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Register a logon scheduled task to check WSABuilds updates.
 .EXAMPLE
@@ -14,6 +14,14 @@ $taskName = 'WsaUpdater-CheckOnLogon'
 $check = Join-Path $PSScriptRoot 'Check-WsaUpdate.ps1'
 if (-not (Test-Path -LiteralPath $check)) {
     throw "Missing $check"
+}
+
+# Optional: honor config.check_on_logon when explicitly false
+Import-Module (Join-Path $PSScriptRoot 'WsaUpdater.psm1') -Force
+$cfg = Read-WsaUpdaterConfig
+if ($cfg.PSObject.Properties['check_on_logon'] -and ($cfg.check_on_logon -eq $false)) {
+    Write-Host "check_on_logon is false in config; not registering task."
+    exit 0
 }
 
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
