@@ -34,11 +34,25 @@ if ($existing) {
 }
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$check`" -Quiet"
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+$who = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+if (-not $who) { $who = "$env:USERDOMAIN\$env:USERNAME" }
+# Avoid SYSTEM / unmapped SIDs; fall back to current user logon without explicit UserId
+try {
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $who
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    $principal = New-ScheduledTaskPrincipal -UserId $who -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'WSA/WSABuilds update check on logon (wsa-updater)' -Force | Out-Null
+} catch {
+    Write-Host "Primary principal failed ($who): $($_.Exception.Message); trying current-user default principal"
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description 'WSA/WSABuilds update check on logon (wsa-updater)' -Force | Out-Null
+}
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'WSA/WSABuilds update check on logon (wsa-updater)' | Out-Null
-Write-Host "Registered scheduled task: $taskName"
+$task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if (-not $task) {
+    throw "Failed to register scheduled task $taskName"
+}
+Write-Host "Registered scheduled task: $taskName (State=$($task.State))"
 Write-Host "It runs: $check -Quiet"
 exit 0

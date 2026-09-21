@@ -133,6 +133,37 @@ def subprocess_run(cmd: list) -> "subprocess.CompletedProcess":  # type: ignore[
     return subprocess.run(cmd, check=False)
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    """Download then optionally install after confirmation via PowerShell scripts."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[2]
+    script = root / "powershell" / "Update-Wsa.ps1"
+    if not script.is_file():
+        print(f"Missing {script}", file=sys.stderr)
+        return 2
+    cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script),
+    ]
+    if args.download_only and not args.confirm_install:
+        cmd.append("-DownloadOnly")
+    if args.confirm_install:
+        cmd.append("-ConfirmInstall")
+    if args.force:
+        cmd.append("-Force")
+    if args.yes:
+        cmd.append("-Yes")
+    if args.config:
+        cmd += ["-ConfigPath", str(args.config)]
+    proc = subprocess_run(cmd)
+    return proc.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wsa-updater", description="WSABuilds WSA update checker")
     sub = p.add_subparsers(dest="command", required=True)
@@ -156,6 +187,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     d.set_defaults(func=cmd_download)
 
+    u = sub.add_parser(
+        "update",
+        help="Download WSABuilds asset; with --confirm-install ask then apply (admin)",
+    )
+    u.add_argument("--config", help="Path to config.json")
+    u.add_argument("--download-only", action="store_true", help="Stop after download")
+    u.add_argument(
+        "--confirm-install",
+        action="store_true",
+        help="After download, show confirm dialog then merge+register (elevates)",
+    )
+    u.add_argument("--force", action="store_true", help="Download/reinstall even if up to date")
+    u.add_argument("--yes", action="store_true", help="Skip dialog; still requires --confirm-install")
+    u.set_defaults(func=cmd_update)
+
     i = sub.add_parser("init-config", help="Write default config.json")
     i.add_argument("--config", help="Path to config.json")
     i.set_defaults(func=cmd_init_config)
@@ -164,8 +210,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--force", action="store_true")
     t.set_defaults(func=cmd_install_task)
 
-    u = sub.add_parser("uninstall-task", help="Remove logon scheduled task")
-    u.set_defaults(func=cmd_uninstall_task)
+    ut = sub.add_parser("uninstall-task", help="Remove logon scheduled task")
+    ut.set_defaults(func=cmd_uninstall_task)
 
     return p
 

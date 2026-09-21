@@ -34,6 +34,15 @@ cd wsa-updater\powershell
 
 # 发现更新后：仅下载
 .\Update-Wsa.ps1 -DownloadOnly
+
+# 下载后弹出确认框；点「是」则自动合并覆盖并注册（需管理员 UAC）
+.\Update-Wsa.ps1 -ConfirmInstall
+
+# 已是最新时强制重装偏好包
+.\Update-Wsa.ps1 -ConfirmInstall -Force
+
+# 无人值守（仍须显式 -ConfirmInstall + -Yes，避免误触发）
+.\Update-Wsa.ps1 -ConfirmInstall -Yes -Force
 ```
 
 卸载计划任务：
@@ -52,6 +61,8 @@ python -m wsa_updater init-config
 python -m wsa_updater check
 python -m wsa_updater check --json
 python -m wsa_updater download --download-only
+python -m wsa_updater update --download-only
+python -m wsa_updater update --confirm-install
 python -m wsa_updater install-task
 python -m wsa_updater uninstall-task
 ```
@@ -73,14 +84,22 @@ Python 3.9+，**仅标准库**。可选 `GITHUB_TOKEN` 环境变量避免 API �
 - `prefer_lts`：优先 LTS release
 - `notify_on_up_to_date`：已是最新时是否也弹窗
 
-## 更新 WSA 时请手动完成（本工具不自动装）
+## 更新 WSA（推荐流程）
 
-1. 运行 `Update-Wsa.ps1 -DownloadOnly` 得到 `.7z`
-2. 备份 `%LOCALAPPDATA%\Packages\MicrosoftCorporationII.WindowsSubsystemForAndroid_8wekyb3d8bbwe\LocalCache\userdata*.vhdx`
-3. 停止 WSA 进程
-4. 解压并**合并覆盖**到 `wsa_install_dir`（务必更新 `Tools\initrd.img` 等）
-5. 管理员运行目录中的 `Run.bat` / `Install.ps1` 重新注册
-6. `adb connect 127.0.0.1:58526` 验收，确认 `com.android.vending` 仍在（GApps 构建）
+1. 检查：`.\Check-WsaUpdate.ps1` 或登录任务自动提醒  
+2. **仅下载**：`.\Update-Wsa.ps1 -DownloadOnly`  
+3. **确认后自动安装**：`.\Update-Wsa.ps1 -ConfirmInstall`  
+   - 备份 `userdata*.vhdx` → 停止 WSA → 解压合并到 `wsa_install_dir` → 管理员 `Add-AppxPackage -Register`  
+   - 会弹出确认框；取消则只保留下载包  
+4. 验收：`adb connect 127.0.0.1:58526`，确认 `com.android.vending`（GApps 构建）仍在  
+
+手动路径（工具自动安装失败时）：备份 vhdx → 停 WSA → 解压覆盖（务必更新 `Tools\initrd.img`）→ 管理员 `Run.bat`/`Install.ps1`。
+
+### 安全说明
+
+- **`Install-WsaBuild.ps1` 无 `-Confirm` 会直接拒绝执行**  
+- `Update-Wsa.ps1` 默认不安装；只有 `-ConfirmInstall` 且确认/`-Yes` 才会应用  
+- 应用安装会请求 UAC（注册 Appx 需要管理员）
 
 ## 测试
 
