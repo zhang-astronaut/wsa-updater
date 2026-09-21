@@ -1,0 +1,16 @@
+{
+  "repo": "MustardChef/WSABuilds",
+  "prefer_lts": true,
+  "asset_pattern": "(?i)WSA_.*_x64_.*GApps.*NoAmazon.*\\.7z$",
+  "fallback_patterns": [
+    "(?i)WSA_.*_x64_.*GApps.*\\.7z$",
+    "(?i)WSA_.*_x64_.*\\.7z$"
+  ],
+  "wsa_install_dir": "C:\\WSA",
+  "download_dir": "C:\\WSA\\_download",
+  "check_on_logon": true,
+  "notify_on_up_to_date": false,
+  "last_release_tag": "",
+  "last_asset_name": "",
+  "last_check_utc": ""
+}

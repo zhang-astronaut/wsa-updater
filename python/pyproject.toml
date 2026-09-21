@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wsa-updater"
+version = "0.1.0"
+description = "Check WSABuilds (Windows Subsystem for Android) updates on Windows"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "zhang-astronaut" }]
+keywords = ["WSA", "WSABuilds", "Android", "Windows"]
+classifiers = [
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Topic :: System :: Software Distribution",
+]
+dependencies = []
+
+[project.scripts]
+wsa-updater = "wsa_updater.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wsa_updater*"]
