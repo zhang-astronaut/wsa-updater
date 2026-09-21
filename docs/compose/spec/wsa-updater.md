@@ -1,140 +1,92 @@
----
+﻿---
 feature: wsa-updater
 status: delivered
 updated: 2026-09-21
-branch: feat/initial-wsa-updater
-commits: 8b03787..HEAD
+branch: main
+commits: 8b03787..2523105
 ---
 
-# WSA Updater（可分发更新检查器）
+# WSA Updater (portable WSABuilds update checker)
 
 ## Report
 
-**What was built** — 可在多台 Windows 机器复用的 **WSABuilds / WSA 更新检查器**（PowerShell 模块 + 等价 Python CLI）。默认偏好 **x64 + GApps + NoAmazon**，优先 **LTS** Release。登录时可通过计划任务 `WsaUpdater-CheckOnLogon` 自动检查；有更新时 **Toast / MessageBox 弹窗提醒**（同一 release+asset 只提醒一次）；**一键仅下载** `.7z`，**绝不静默覆盖或注册 WSA**。配置可移植（`%APPDATA%\WsaUpdater\config.json` 或 `WSA_UPDATER_CONFIG`）。
+**What was built** - Multi-machine Windows tool to check **WSABuilds / WSA** updates (PowerShell module + equivalent Python CLI). Default preference: **x64 + GApps + NoAmazon**, prefer **LTS** releases. Logon scheduled task `WsaUpdater-CheckOnLogon` auto-checks; **Toast / MessageBox** notifies on update (once per release+asset); **one-click download only** - never silently overwrites or registers WSA. Portable config (`%APPDATA%\WsaUpdater\config.json` or `WSA_UPDATER_CONFIG`).
 
-**Verification** — PowerShell 5.1 解析全脚本 PASS；`tests/run_tests.py` **9/9 PASS**（含版本相等不误报、mismatch 只通知一次、无本地 WSA 等决策树）；本机实测 GitHub：`installed=2407.40000.4.0`、`asset=WSA_...GApps-13.0-NoAmazon.7z`、空 `last_*` 时 `has_update=false reason=up_to_date should_notify=false`。复核两轮：首轮 critical（first_seen 误报）已修；二轮 critical 清零，下载断点续传两处 major 已修（PS Range 写 sidecar 后 append；Python 校验 206/Content-Range，否则全量重下）。
+**Verification** - PowerShell 5.1 parse all scripts PASS; `tests/run_tests.py` **9/9 PASS** (version-equal never false-positives; mismatch notifies once; no-local-WSA path). Live on this PC: installed `2407.40000.4.0`, asset `WSA_...GApps-13.0-NoAmazon.7z`, empty `last_*` -> `has_update=false reason=up_to_date should_notify=false`. Two review rounds: critical false-positive fixed; non-curl resume majors fixed (PS Range via sidecar+append; Python requires 206/Content-Range else full redownload).
 
 **Journey log**
-- PS 5.1 必须 UTF-8 **BOM**，否则中文/特殊引号会解析失败。
-- 「已装同一版本」时不能因 `last_release_tag` 为空就报更新——版本相等优先判定 `up_to_date`。
-- `Invoke-WebRequest -OutFile` **不会**按 Range 追加，必须临时文件 + 手动 append。
-- 默认 `GApps-*NoAmazon` 匹配时排除 **canary**，避免误选 Magisk Canary 包。
-- 安装/更新 WSA 仍需管理员注册 Appx；工具只负责发现与下载。
+- PS 5.1 needs UTF-8 **BOM** or parsers fail on non-ASCII.
+- Equal installed/asset version must be `up_to_date` even when `last_release_tag` is empty.
+- `Invoke-WebRequest -OutFile` never Range-appends; write sidecar then concatenate.
+- Prefer `GApps-*NoAmazon` but exclude **canary** names when multiple match.
+- Updating WSA still requires admin Appx register; this tool only detects and downloads.
 
-用户在 Windows 上通过 **WSABuilds（LTS）** 侧载安装了真正的 WSA（默认 **GApps + NoAmazon** 变体，目录常为 `C:\WSA`）。官方 Store 已 EOL，WSA 更新只能靠盯 GitHub Releases。需要一款 **换机可用** 的工具：
+## [S1] Problem
 
-1. **每次开机自动检查**是否有更新的 WSABuilds 构建；
-2. **有更新时弹窗提醒**（Windows Toast / 对话框）；
-3. **不静默改动 WSA**；用户确认后 **一键下载** 对应资源包；
-4. 可 **克隆到另一台 Windows 机器** 即用（配置可移植）。
+User installs real WSA via **WSABuilds LTS** (default **GApps + NoAmazon**, often `C:\WSA`). Official Store WSA is EOL (2025-03-05). Need a **portable** tool that: (1) checks for newer WSABuilds on every logon; (2) **popup-notifies** when an update exists; (3) does **not** silently change WSA; (4) supports **one-click download** after user confirms; (5) works when cloned to another Windows PC.
 
 ## [S2] Design
 
-### 2.1 产品形态（已定）
+### 2.1 Product shape (settled)
 
-| 层 | 内容 |
+| Layer | Content |
 |---|---|
-| PowerShell | 主实现：检查、通知、下载、注册 Scheduled Task、配置管理 |
-| Python | 同等核心 CLI：`python -m wsa_updater check|download|install-task`，便于脚本化/打包 exe |
-| 分发 | 公开 GitHub 仓库 `zhang-astronaut/wsa-updater`，解压/克隆即可用 |
+| PowerShell | Primary: check, notify, download, scheduled task, config |
+| Python | Peer CLI: `python -m wsa_updater check|download|install-task` |
+| Distribution | Public GitHub `zhang-astronaut/wsa-updater` |
 
-### 2.2 更新源契约
+### 2.2 Update source contract
 
-- 仓库：`MustardChef/WSABuilds`
-- API：`GET https://api.github.com/repos/MustardChef/WSABuilds/releases`（或 `/releases/latest`）
-- 选择规则（可配置）：
-  1. 优先 tag/name 含 `LTS` 的 release（按 published_at 最新）；
-  2. 否则最新非 draft release；
-  3. 在 assets 中按 **正则** 匹配包，默认偏好：  
-     `(?i)WSA_.*_x64_.*GApps.*NoAmazon.*\.7z$`  
-     （不匹配则回退 `(?i)WSA_.*_x64_.*GApps.*\.7z$`，再回退 `(?i)WSA_.*_x64_.*\.7z$`）
-- 比较字段：release 的 `name`/`tag_name` 与本地记录的 `last_seen` / 已安装版本字符串；无本地 WSA 时仅提示「发现可用构建」。
+- Repo: `MustardChef/WSABuilds`
+- API: `GET https://api.github.com/repos/MustardChef/WSABuilds/releases`
+- Prefer LTS tag/name; else newest non-draft
+- Asset regex default: `(?i)WSA_.*_x64_.*GApps.*NoAmazon.*\.7z$` with fallbacks for GApps then any x64 `.7z`
+- Prefer non-canary names among matches; then largest size
+- Compare installed Appx/manifest version to version parsed from asset `WSA_(\d+\.\d+\.\d+\.\d+)`
+- Notify once per release+asset via `last_release_tag` + `last_asset_name`
 
-### 2.3 本地状态
+### 2.3 Local state
 
-配置文件（JSON，默认 `%APPDATA%\WsaUpdater\config.json`，可用 `WSA_UPDATER_CONFIG` 覆盖）：
+Config JSON default `%APPDATA%\WsaUpdater\config.json`; override `WSA_UPDATER_CONFIG`. Keys: `repo`, `prefer_lts`, `asset_pattern`, `fallback_patterns`, `wsa_install_dir`, `download_dir`, `check_on_logon`, `notify_on_up_to_date`, `last_release_tag`, `last_asset_name`, `last_check_utc`.
 
-```json
-{
-  "repo": "MustardChef/WSABuilds",
-  "prefer_lts": true,
-  "asset_pattern": "(?i)WSA_.*_x64_.*GApps.*NoAmazon.*\\.7z$",
-  "fallback_patterns": ["(?i)WSA_.*_x64_.*GApps.*\\.7z$", "(?i)WSA_.*_x64_.*\\.7z$"],
-  "wsa_install_dir": "C:\\WSA",
-  "download_dir": "C:\\WSA\\_download",
-  "check_on_logon": true,
-  "notify_on_up_to_date": false,
-  "last_release_tag": "",
-  "last_asset_name": "",
-  "last_check_utc": ""
-}
-```
+### 2.4 Version probe
 
-### 2.4 版本探测
+1. `Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid` (PS) / AppModel package registry (Python)
+2. Else `wsa_install_dir\AppxManifest.xml` Identity Version
+3. Else null
 
-优先级：
+Decision: equal versions -> `up_to_date` (never first-seen false positive); mismatch -> `has_update` + `should_notify` unless already notified; no local WSA -> update available once per tag+asset.
 
-1. `Get-AppxPackage MicrosoftCorporationII.WindowsSubsystemForAndroid` → `Version` / `PackageFullName`；
-2. 否则读 `wsa_install_dir` 下 `AppxManifest.xml` 的 `Identity@Version`；
-3. 否则 `installed = null`。
+### 2.5 Notification
 
-与 GitHub 上 asset/release 标签比较时：允许「tag 相同但用户未确认下载」仍提醒一次（以 `last_release_tag` 去重）；`installed` 版本与 release 中 WSA 版本号（从 asset 名解析 `WSA_(\d+\.\d+\.\d+\.\d+)`）比较。
+Toast via Windows.UI.Notifications; MessageBox/console fallback. Body: current version, release tag, asset version/name. **Default never auto-installs.**
 
-### 2.5 通知
+### 2.6 Logon check
 
-1. **Toast**（Windows 10/11）：`Windows.UI.Notifications.ToastNotificationManager` + 简单 XML toast，AppId 使用注册表/协议回退 `Windows PowerShell` 或自定义 AUMID；
-2. 失败则 **WPF/WinForms MessageBox** 或 `msg` 回退；
-3. 文案：当前版本 / 新版本 tag / 目标 asset 名 / 操作指引。
+Task `WsaUpdater-CheckOnLogon`, AtLogOn, runs `Check-WsaUpdate.ps1 -Quiet`. Respects `check_on_logon=false` at install time. `Uninstall-WsaUpdater.ps1` removes it.
 
-Toast 按钮或弹窗后的下一步由 CLI 提供：
+### 2.7 Portability
 
-```powershell
-Check-WsaUpdate.ps1          # 检查+通知
-Update-Wsa.ps1 -DownloadOnly # 一键下载到 download_dir
-```
+Config-driven paths; optional `GITHUB_TOKEN`; Python 3.9+ stdlib only; PS 5.1+ / pwsh.
 
-**默认不自动安装。** `-DownloadOnly` 为推荐交付行为。
+### 2.8 Errors
 
-### 2.6 开机检查
-
-`Install-WsaUpdater.ps1` 创建计划任务：
-
-- 名称：`WsaUpdater-CheckOnLogon`
-- 触发：用户登录（`AtLogOn`）
-- 操作：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File <repo>\powershell\Check-WsaUpdate.ps1 -Quiet`
-- 可用 `Uninstall-WsaUpdater.ps1` 删除。
-
-### 2.7 可移植性
-
-- 不在安装路径写死盘符以外的机器特定内容；`wsa_install_dir`/`download_dir` 可改；
-- GitHub API 匿名访问即可（可选 `GITHUB_TOKEN` 提高限流）；
-- 依赖：Windows PowerShell 5.1+ 或 pwsh；Python 3.9+（仅使用 stdlib：`urllib`/`json`/`re`/`subprocess`）；
-- 仓库内含 `config.sample.json`、`README.md`（中英可中文为主）。
-
-### 2.8 错误行为
-
-| 情况 | 行为 |
-|---|---|
-| 网络失败 | 退出码 2，stderr 说明；`-Quiet` 时不弹窗 |
-| API 限流 | 提示可选设置 `GITHUB_TOKEN` |
-| 无匹配 asset | 退出码 3，列出该 release assets 供排查 |
-| 下载中断 | 保留 `.partial`，重试续传（curl `-C -` 或 Python Range） |
-| 本机无 WSA | 仍可检查并提醒「可安装构建」 |
+Network/API -> exit 2 + token hint; no matching asset -> exit 3 + asset list; download uses curl `-C -` or Range sidecar/206-safe urllib fallback.
 
 ## [S3] Out of Scope
 
-- 不自动 `Add-AppxPackage` 注册 / 不自动覆盖 `C:\WSA`（避免静默弄坏运行中的 WSA）；
-- 不抓取非 WSABuilds 的第三方镜像；
-- 不做完整 GUI 设置中心；
-- 不支持 macOS/Linux 宿主机（目标是 Windows 上的 WSA 用户）。
+- No auto `Add-AppxPackage` / no silent overwrite of WSA install dir
+- No non-WSABuilds mirrors
+- No full GUI settings app
+- Host OS target is Windows (WSA users)
 
 ## Tasks
 
-- [x] T1: 初始化仓库结构与 README/config.sample — acceptance: 目录与示例配置存在（covers: S2.1; S2.3; S2.7）
-- [x] T2: PowerShell 核心：读配置、查 GitHub、匹配 asset、比较版本 — acceptance: `Check-WsaUpdate.ps1` 在本机跑通并输出 JSON 结果（covers: S2.2; S2.4）
-- [x] T3: PowerShell 通知 + 一键下载 — acceptance: 有更新时可 toast/回退弹窗；`Update-Wsa.ps1 -DownloadOnly` 可下载 asset（covers: S2.5）
-- [x] T4: 计划任务安装/卸载脚本 — acceptance: Install/Uninstall 脚本语法正确，文档说明注册步骤（covers: S2.6）
-- [x] T5: Python CLI 对等实现 — acceptance: `python -m wsa_updater check` 与 PowerShell 同源规则可运行（covers: S2.1; S2.2）
-- [x] T6: 测试与本机验证 — acceptance: pytest/语法检查通过；本机 check 有真实输出（covers: S2.2; S2.4; S2.8）
-- [x] T7: 独立复核 — acceptance: 无 critical；major 已修（covers: S2）
-- [ ] T8: 创建 GitHub 公开仓库并推送 — acceptance: `zhang-astronaut/wsa-updater` 可访问（covers: S2.1）
+- [x] T1: Repo layout + README/config.sample — acceptance: structure and sample config exist (covers: S2.1; S2.3; S2.7)
+- [x] T2: PowerShell check core — acceptance: live JSON from `Check-WsaUpdate.ps1` (covers: S2.2; S2.4)
+- [x] T3: PowerShell notify + download-only — acceptance: toast path; `Update-Wsa.ps1 -DownloadOnly` (covers: S2.5)
+- [x] T4: Scheduled task install/uninstall — acceptance: scripts parse; documented (covers: S2.6)
+- [x] T5: Python CLI peer — acceptance: `python -m wsa_updater check` works (covers: S2.1; S2.2)
+- [x] T6: Tests + live verify — acceptance: `tests/run_tests.py` pass; live check output (covers: S2.2; S2.4; S2.8)
+- [x] T7: Independent review — acceptance: no critical; majors fixed (covers: S2)
+- [x] T8: Public GitHub push — acceptance: https://github.com/zhang-astronaut/wsa-updater accessible (covers: S2.1)
