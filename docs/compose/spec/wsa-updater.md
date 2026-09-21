@@ -75,7 +75,7 @@ Network/API -> exit 2 + token hint; no matching asset -> exit 3 + asset list; do
 
 ## [S3] Out of Scope
 
-- No auto `Add-AppxPackage` / no silent overwrite of WSA install dir
+- No silent install: apply only after explicit `-ConfirmInstall` + user confirm/`-Yes`
 - No non-WSABuilds mirrors
 - No full GUI settings app
 - Host OS target is Windows (WSA users)
