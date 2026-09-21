@@ -42,25 +42,51 @@ def download_asset(result: Dict[str, Any], download_dir: Optional[str] = None) -
             headers["Range"] = f"bytes={resume_from}-"
         try:
             req = Request(str(url), headers=headers, method="GET")
-            with urlopen(req, timeout=120) as resp, open(partial, "ab" if resume_from else "wb") as fh:
+            with urlopen(req, timeout=120) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                content_range = resp.headers.get("Content-Range") if resp.headers else None
+                if resume_from > 0:
+                    if status != 206 and not content_range:
+                        # Full body despite Range — restart from zero
+                        resume_from = 0
+                        headers.pop("Range", None)
+                        resp.close()
+                        req2 = Request(str(url), headers=headers, method="GET")
+                        with urlopen(req2, timeout=120) as resp2, open(partial, "wb") as fh:
+                            while True:
+                                chunk = resp2.read(1024 * 256)
+                                if not chunk:
+                                    break
+                                fh.write(chunk)
+                    else:
+                        with open(partial, "ab") as fh:
+                            while True:
+                                chunk = resp.read(1024 * 256)
+                                if not chunk:
+                                    break
+                                fh.write(chunk)
+                else:
+                    with open(partial, "wb") as fh:
+                        while True:
+                            chunk = resp.read(1024 * 256)
+                            if not chunk:
+                                break
+                            fh.write(chunk)
+        except Exception:
+            if partial.exists():
+                try:
+                    partial.unlink()
+                except OSError:
+                    pass
+            req = Request(str(url), headers={"User-Agent": "wsa-updater"}, method="GET")
+            if token:
+                req.add_header("Authorization", f"Bearer {token}")
+            with urlopen(req, timeout=120) as resp, open(partial, "wb") as fh:
                 while True:
                     chunk = resp.read(1024 * 256)
                     if not chunk:
                         break
                     fh.write(chunk)
-        except Exception:
-            # Range may be unsupported; restart full download
-            if resume_from > 0:
-                headers.pop("Range", None)
-                req = Request(str(url), headers=headers, method="GET")
-                with urlopen(req, timeout=120) as resp, open(partial, "wb") as fh:
-                    while True:
-                        chunk = resp.read(1024 * 256)
-                        if not chunk:
-                            break
-                        fh.write(chunk)
-            else:
-                raise
 
     partial.replace(dest)
     return dest

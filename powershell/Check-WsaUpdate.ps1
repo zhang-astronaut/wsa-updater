@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Check WSABuilds for WSA updates and optionally notify.
 .EXAMPLE

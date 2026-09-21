@@ -1,16 +1,25 @@
 ---
 feature: wsa-updater
-status: designed
+status: delivered
 updated: 2026-09-21
 branch: feat/initial-wsa-updater
-commits: 
+commits: 8b03787..HEAD
 ---
 
 # WSA Updater（可分发更新检查器）
 
 ## Report
 
-## [S1] Problem
+**What was built** — 可在多台 Windows 机器复用的 **WSABuilds / WSA 更新检查器**（PowerShell 模块 + 等价 Python CLI）。默认偏好 **x64 + GApps + NoAmazon**，优先 **LTS** Release。登录时可通过计划任务 `WsaUpdater-CheckOnLogon` 自动检查；有更新时 **Toast / MessageBox 弹窗提醒**（同一 release+asset 只提醒一次）；**一键仅下载** `.7z`，**绝不静默覆盖或注册 WSA**。配置可移植（`%APPDATA%\WsaUpdater\config.json` 或 `WSA_UPDATER_CONFIG`）。
+
+**Verification** — PowerShell 5.1 解析全脚本 PASS；`tests/run_tests.py` **9/9 PASS**（含版本相等不误报、mismatch 只通知一次、无本地 WSA 等决策树）；本机实测 GitHub：`installed=2407.40000.4.0`、`asset=WSA_...GApps-13.0-NoAmazon.7z`、空 `last_*` 时 `has_update=false reason=up_to_date should_notify=false`。复核两轮：首轮 critical（first_seen 误报）已修；二轮 critical 清零，下载断点续传两处 major 已修（PS Range 写 sidecar 后 append；Python 校验 206/Content-Range，否则全量重下）。
+
+**Journey log**
+- PS 5.1 必须 UTF-8 **BOM**，否则中文/特殊引号会解析失败。
+- 「已装同一版本」时不能因 `last_release_tag` 为空就报更新——版本相等优先判定 `up_to_date`。
+- `Invoke-WebRequest -OutFile` **不会**按 Range 追加，必须临时文件 + 手动 append。
+- 默认 `GApps-*NoAmazon` 匹配时排除 **canary**，避免误选 Magisk Canary 包。
+- 安装/更新 WSA 仍需管理员注册 Appx；工具只负责发现与下载。
 
 用户在 Windows 上通过 **WSABuilds（LTS）** 侧载安装了真正的 WSA（默认 **GApps + NoAmazon** 变体，目录常为 `C:\WSA`）。官方 Store 已 EOL，WSA 更新只能靠盯 GitHub Releases。需要一款 **换机可用** 的工具：
 
@@ -121,11 +130,11 @@ Update-Wsa.ps1 -DownloadOnly # 一键下载到 download_dir
 
 ## Tasks
 
-- [ ] T1: 初始化仓库结构与 README/config.sample — acceptance: 目录与示例配置存在（covers: S2.1; S2.3; S2.7）
-- [ ] T2: PowerShell 核心：读配置、查 GitHub、匹配 asset、比较版本 — acceptance: `Check-WsaUpdate.ps1` 在本机跑通并输出 JSON 结果（covers: S2.2; S2.4）
-- [ ] T3: PowerShell 通知 + 一键下载 — acceptance: 有更新时可 toast/回退弹窗；`Update-Wsa.ps1 -DownloadOnly` 可下载 asset（covers: S2.5）
-- [ ] T4: 计划任务安装/卸载脚本 — acceptance: Install/Uninstall 脚本语法正确，文档说明注册步骤（covers: S2.6）
-- [ ] T5: Python CLI 对等实现 — acceptance: `python -m wsa_updater check` 与 PowerShell 同源规则可运行（covers: S2.1; S2.2）
-- [ ] T6: 测试与本机验证 — acceptance: pytest/语法检查通过；本机 check 有真实输出（covers: S2.2; S2.4; S2.8）
-- [ ] T7: 独立复核 — acceptance: 无 critical；major 已修（covers: S2）
+- [x] T1: 初始化仓库结构与 README/config.sample — acceptance: 目录与示例配置存在（covers: S2.1; S2.3; S2.7）
+- [x] T2: PowerShell 核心：读配置、查 GitHub、匹配 asset、比较版本 — acceptance: `Check-WsaUpdate.ps1` 在本机跑通并输出 JSON 结果（covers: S2.2; S2.4）
+- [x] T3: PowerShell 通知 + 一键下载 — acceptance: 有更新时可 toast/回退弹窗；`Update-Wsa.ps1 -DownloadOnly` 可下载 asset（covers: S2.5）
+- [x] T4: 计划任务安装/卸载脚本 — acceptance: Install/Uninstall 脚本语法正确，文档说明注册步骤（covers: S2.6）
+- [x] T5: Python CLI 对等实现 — acceptance: `python -m wsa_updater check` 与 PowerShell 同源规则可运行（covers: S2.1; S2.2）
+- [x] T6: 测试与本机验证 — acceptance: pytest/语法检查通过；本机 check 有真实输出（covers: S2.2; S2.4; S2.8）
+- [x] T7: 独立复核 — acceptance: 无 critical；major 已修（covers: S2）
 - [ ] T8: 创建 GitHub 公开仓库并推送 — acceptance: `zhang-astronaut/wsa-updater` 可访问（covers: S2.1）

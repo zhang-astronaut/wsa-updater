@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Register a logon scheduled task to check WSABuilds updates.
 .EXAMPLE

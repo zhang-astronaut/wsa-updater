@@ -1,4 +1,4 @@
-# WsaUpdater PowerShell helpers for WSABuilds update checks.
+﻿# WsaUpdater PowerShell helpers for WSABuilds update checks.
 # Compatible with Windows PowerShell 5.1+ and PowerShell 7+.
 
 Set-StrictMode -Version Latest
@@ -368,12 +368,31 @@ function Start-WsaAssetDownload {
         if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $($env:GITHUB_TOKEN)" }
         if ($resumeFrom -gt 0) {
             $headers['Range'] = "bytes=$resumeFrom-"
+            $chunk = Join-Path $DownloadDir ('{0}.chunk' -f $Result.asset_name)
+            Remove-Item -LiteralPath $chunk -Force -ErrorAction SilentlyContinue
             try {
-                Invoke-WebRequest -Uri $url -OutFile $partial -Headers $headers -UseBasicParsing -MaximumRedirection 10
+                Invoke-WebRequest -Uri $url -OutFile $chunk -Headers $headers -UseBasicParsing -MaximumRedirection 10
+                # Append remaining bytes to existing partial; if server sent full body (no Range), restart.
+                $chunkLen = (Get-Item -LiteralPath $chunk).Length
+                if ($chunkLen -eq 0) { throw 'empty chunk' }
+                # Heuristic: if chunk is much larger than remaining expected, treat as full download
+                $expectedRemaining = $null
+                if ($Result.asset_size) { $expectedRemaining = [long]$Result.asset_size - $resumeFrom }
+                if ($expectedRemaining -gt 0 -and $chunkLen -gt ($expectedRemaining + 1MB)) {
+                    Move-Item -LiteralPath $chunk -Destination $partial -Force
+                } else {
+                    $src = [System.IO.File]::OpenRead($chunk)
+                    try {
+                        $dst = [System.IO.File]::Open($partial, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
+                        try { $src.CopyTo($dst) } finally { $dst.Dispose() }
+                    } finally { $src.Dispose() }
+                    Remove-Item -LiteralPath $chunk -Force -ErrorAction SilentlyContinue
+                }
             } catch {
-                # Server may not honor Range; restart full download.
+                Remove-Item -LiteralPath $chunk -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
-                Invoke-WebRequest -Uri $url -OutFile $partial -Headers @{ 'User-Agent' = 'wsa-updater' } -UseBasicParsing
+                $headers.Remove('Range')
+                Invoke-WebRequest -Uri $url -OutFile $partial -Headers $headers -UseBasicParsing
             }
         } else {
             Invoke-WebRequest -Uri $url -OutFile $partial -Headers $headers -UseBasicParsing
